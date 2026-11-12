@@ -1,0 +1,15 @@
+# Local virtualenv with claude-agent-sdk (~430 MB, recreated by the README's setup step)
+.venv/
+
+# Personal settings -- may hold a model choice or other local config
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Screenshots written by test_ui.py
+shot_*.png
+
+# macOS
+.DS_Store

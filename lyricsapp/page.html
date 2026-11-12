@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spotify Live Lyrics</title>
+<style>
+  :root {
+    --bg: #0a0a0c;
+    --panel: rgba(255,255,255,.045);
+    --border: rgba(255,255,255,.10);
+    --text: #f2f2f4;
+    --dim: #9a9aa4;
+    --dimmer: #62626c;
+    --accent: #1ed760;
+  }
+  * { box-sizing: border-box; }
+  /* Any element given its own `display` (e.g. #singer's flex) would
+     otherwise ignore the hidden attribute entirely. */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 400 16px/1.55 ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #bg {
+    position: fixed; inset: -12%;
+    background-size: cover; background-position: center;
+    filter: blur(80px) saturate(1.5) brightness(.42);
+    transform: scale(1.15);
+    transition: background-image .8s ease;
+    z-index: 0;
+  }
+  #bg::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(0,0,0,.25), rgba(0,0,0,.82));
+  }
+  #app {
+    position: relative; z-index: 1;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) 400px;
+    grid-template-rows: minmax(0,1fr);   /* bound the row so children can scroll */
+    overflow: hidden;
+    gap: 0;
+  }
+  @media (max-width: 980px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
+    #side { border-left: none !important; border-top: 1px solid var(--border); max-height: 42vh; }
+  }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 20px 28px 16px;
+  }
+  #art {
+    width: 68px; height: 68px; border-radius: 10px; flex: none;
+    background: #1a1a1e center/cover no-repeat;
+    box-shadow: 0 8px 28px rgba(0,0,0,.55);
+  }
+  #meta { min-width: 0; flex: 1; }
+  #title {
+    font-size: 21px; font-weight: 650; letter-spacing: -.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #artist { color: var(--dim); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #badges { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px;
+    background: rgba(255,255,255,.07); color: var(--dim);
+    border: 1px solid var(--border);
+  }
+  .badge.live { color: var(--accent); border-color: rgba(30,215,96,.35); background: rgba(30,215,96,.10); }
+
+  #actions { flex: none; display: flex; gap: 8px; align-items: center; }
+  #tbtn {
+    font: 500 13px/1 ui-sans-serif, -apple-system, system-ui, sans-serif;
+    color: var(--text); background: rgba(255,255,255,.07);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 15px; cursor: pointer; white-space: nowrap;
+    transition: background .18s, border-color .18s, color .18s;
+  }
+  #tbtn:hover:not(:disabled) {
+    background: rgba(30,215,96,.13); border-color: rgba(30,215,96,.4); color: #fff;
+  }
+  #tbtn:active:not(:disabled) { transform: translateY(1px); }
+  #tbtn:disabled { opacity: .55; cursor: default; }
+  #tbtn.on { background: rgba(30,215,96,.15); border-color: rgba(30,215,96,.45); color: #bff0d0; }
+  @media (max-width: 620px) { #tbtn { padding: 7px 11px; font-size: 12px; } }
+
+  /* who is singing: a tag wherever the voice changes, and a chip that
+     follows the highlighted line */
+  .who {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    font-weight: 600; color: var(--dimmer); padding: 18px 0 2px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .who:first-child { padding-top: 0; }
+  .plain .who { padding-top: 12px; }
+  .who .dot, #singer .dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none;
+  }
+  .who .nm { display: inline-flex; align-items: center; gap: 5px; }
+  #singer {
+    margin-top: 7px; font-size: 12.5px; color: var(--dim);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  #singer .nm { display: inline-flex; align-items: center; gap: 6px; color: #e6e6ec; }
+  #singer .lbl { color: var(--dimmer); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+
+  #progress { height: 3px; background: rgba(255,255,255,.10); margin: 0 28px; border-radius: 2px; overflow: hidden; }
+  #progress > div { height: 100%; width: 0; background: var(--accent); transition: width .25s linear; }
+
+  /* ---------- lyrics ---------- */
+  #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
+  #lyrics {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14vh 40px 34vh;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0,
+      #000 78px, #000 calc(100% - 90px), transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0,
+      #000 78px, #000 calc(100% - 90px), transparent 100%);
+  }
+  #lyrics::-webkit-scrollbar { display: none; }
+  .line {
+    font-size: 30px; line-height: 1.32; font-weight: 640; letter-spacing: -.015em;
+    color: rgba(255,255,255,.38);
+    padding: 7px 0;
+    transition: color .35s ease, transform .35s ease, filter .35s ease;
+    transform-origin: left center;
+    cursor: default;
+  }
+  .line.past { color: rgba(255,255,255,.19); }
+  .line.active {
+    color: #fff;
+    transform: scale(1.045);
+    text-shadow: 0 2px 26px rgba(255,255,255,.18);
+  }
+  .line.near { color: rgba(255,255,255,.56); }
+  .line.blank { height: 10px; padding: 0; }
+  .plain .line { font-size: 20px; font-weight: 500; color: rgba(255,255,255,.72) !important; padding: 3px 0; }
+
+  #status {
+    padding: 22vh 40px; color: var(--dim); font-size: 17px; max-width: 620px;
+  }
+  #status h2 { font-size: 22px; color: var(--text); margin: 0 0 10px; font-weight: 620; }
+  #status code {
+    background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 5px;
+    font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* ---------- sidebar ---------- */
+  #side {
+    min-height: 0;
+    border-left: 1px solid var(--border);
+    background: rgba(10,10,12,.55);
+    backdrop-filter: blur(24px);
+    overflow-y: auto; padding: 26px 26px 60px;
+  }
+  #side h3 {
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--dimmer); margin: 26px 0 10px; font-weight: 600;
+  }
+  #side h3:first-child { margin-top: 0; }
+  #oneliner {
+    font-size: 19px; line-height: 1.42; font-weight: 600; letter-spacing: -.01em;
+    color: #fff; margin-bottom: 18px;
+  }
+  #side p { margin: 0 0 12px; color: #cfcfd6; font-size: 14.5px; line-height: 1.62; }
+  #themes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(255,255,255,.075); border: 1px solid var(--border); color: #d6d6de;
+  }
+  .chip.genre {
+    background: rgba(30,215,96,.10); border-color: rgba(30,215,96,.35);
+    color: #bff0d0; letter-spacing: .01em;
+  }
+  .ctx-flag {
+    font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--dimmer); margin-bottom: 14px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .kl { margin-bottom: 14px; padding-left: 12px; border-left: 2px solid rgba(30,215,96,.5); }
+  .kl .q { color: #fff; font-size: 14.5px; font-style: italic; margin-bottom: 4px; }
+  .kl .m { color: var(--dim); font-size: 13.5px; line-height: 1.55; }
+  .muted { color: var(--dimmer); font-size: 14px; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; margin-right: 8px;
+    border: 2px solid rgba(255,255,255,.2); border-top-color: rgba(255,255,255,.7);
+    border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #offset {
+    position: fixed; left: 28px; bottom: 18px; z-index: 3;
+    font-size: 12px; color: var(--dimmer);
+    background: rgba(0,0,0,.5); padding: 5px 10px; border-radius: 8px;
+    border: 1px solid var(--border);
+    opacity: 0; transition: opacity .3s;
+  }
+  #offset.show { opacity: 1; }
+
+  #sync {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px;
+    z-index: 4; max-width: min(560px, calc(100vw - 48px));
+    font-size: 13.5px; line-height: 1.6; color: var(--text); text-align: center;
+    background: rgba(14,14,17,.92); padding: 12px 20px; border-radius: 12px;
+    border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    backdrop-filter: blur(20px);
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  #sync.show { opacity: 1; }
+  .tr {
+    font-size: 17px; font-weight: 450; line-height: 1.4; letter-spacing: 0;
+    color: rgba(120,215,255,.78); padding: 2px 0 6px;
+  }
+  .plain .tr { font-size: 15px; }
+  .tr .why { color: rgba(255,255,255,.42); font-size: 13px; font-style: italic; }
+  .tr.unsure { color: rgba(120,215,255,.5); }
+  .tr.unsure::after {
+    content: "uncertain"; margin-left: 8px; font-size: 10px;
+    letter-spacing: .06em; text-transform: uppercase;
+    color: rgba(245,166,35,.85); vertical-align: 1px;
+  }
+  #sync.bad { border-color: rgba(255,120,110,.45); }
+  #sync b { color: var(--accent); font-weight: 650; }
+  #sync .k {
+    display: inline-block; padding: 1px 6px; margin: 0 1px; border-radius: 5px;
+    background: rgba(255,255,255,.10); border: 1px solid var(--border);
+    font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: #e6e6ec;
+  }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="app">
+  <div id="main">
+    <header>
+      <div id="art"></div>
+      <div id="meta">
+        <div id="title">Waiting for Spotify…</div>
+        <div id="artist"></div>
+        <div id="badges"></div>
+        <div id="singer" hidden></div>
+      </div>
+      <div id="actions">
+        <button id="tbtn" type="button" hidden>Translate</button>
+      </div>
+    </header>
+    <div id="progress"><div></div></div>
+    <div id="lyrics"></div>
+    <div id="status" hidden></div>
+  </div>
+  <aside id="side">
+    <div id="analysis"><p class="muted">Play something in Spotify to get started.</p></div>
+  </aside>
+</div>
+<div id="offset">sync offset 0.0s</div>
+<div id="sync"></div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const el = { bg:$('#bg'), art:$('#art'), title:$('#title'), artist:$('#artist'),
+               badges:$('#badges'), lyrics:$('#lyrics'), status:$('#status'),
+               side:$('#analysis'), prog:$('#progress > div'), offset:$('#offset'),
+               sync:$('#sync'), tbtn:$('#tbtn'), singer:$('#singer') };
+  el.tbtn.addEventListener('click', () => toggleTranslation());
+
+  let trackId = null, lyrics = null, lyricsKind = null, lyricsSource = null;
+  let lyricsDelta = 0, timingDropped = false;
+  let vocals = null;           // {lines: [[names]|null per line], singers, credited}
+  let lastSingerKey = null;
+  let basePos = 0, baseAt = 0, playing = false, duration = 0;
+  let lineNodes = [], lastActive = -1, userScrolledAt = 0;
+  let analysisStatus = null, detailTimer = null;
+  // ~2 minutes of waiting before we stop asking; reset on every track change.
+  let detailPolls = 0;
+  const MAX_DETAIL_POLLS = 48;
+  let offset = parseFloat(localStorage.getItem('lyricOffset') || '0') || 0;
+
+  // Smooth scrolling fires scroll events for a while after we start it, so we
+  // hold a window during which scroll events are known to be ours, not the user's.
+  let autoScrollUntil = 0;
+  el.lyrics.addEventListener('scroll', () => {
+    if (Date.now() > autoScrollUntil) userScrolledAt = Date.now();
+  });
+  // 'scrollend' closes the grace window as soon as our scroll settles, so a user
+  // scroll right after an auto-scroll is still respected.
+  if ('onscrollend' in window) {
+    el.lyrics.addEventListener('scrollend', () => { autoScrollUntil = 0; });
+  }
+
+  // ---------- sync mode ----------
+  // A third of tracks arrive as plain text: the words exist, the timing
+  // doesn't. Tapping through once fixes it locally and can be sent back.
+  let syncing = false, syncStamps = [], syncIdx = 0;
+  let translation = null, showTranslation = false;
+  // Humans tap after they hear the line start, so stamps land consistently
+  // late. Pulling them back by this much makes the result feel right.
+  const TAP_LEAD = 0.25;
+
+  const nowPos = () =>
+    playing ? basePos + (performance.now() - baseAt) / 1000 : basePos;
+
+  function syncStatus(msg, cls) {
+    el.sync.className = 'show' + (cls ? ' ' + cls : '');
+    el.sync.innerHTML = msg;
+  }
+
+  function startSync() {
+    if (lyricsKind !== 'plain' || !lineNodes.length) return;
+    syncing = true; syncStamps = []; syncIdx = 0;
+    lineNodes.forEach(n => n.classList.remove('past', 'active', 'near'));
+    paintSync();
+  }
+
+  function paintSync() {
+    lineNodes.forEach((n, i) => {
+      n.classList.toggle('active', i === syncIdx);
+      n.classList.toggle('past', i < syncIdx);
+      n.classList.remove('near');
+    });
+    const node = lineNodes[syncIdx];
+    if (node) {
+      autoScrollUntil = Date.now() + 1200;
+      el.lyrics.scrollTo({ top: Math.max(0, node.offsetTop - el.lyrics.clientHeight * 0.38),
+                           behavior: 'smooth' });
+    }
+    syncStatus(`<b>Sync mode</b> — line ${Math.min(syncIdx + 1, lineNodes.length)} of ${lineNodes.length}` +
+      `<br><span class="k">space</span> stamp this line · <span class="k">⌫</span> undo · ` +
+      `<span class="k">enter</span> save · <span class="k">esc</span> cancel`);
+  }
+
+  function stampLine() {
+    if (syncIdx >= lineNodes.length) return;
+    // Blank spacer lines carry no words, so they get no timestamp.
+    if ((lyrics.lines[syncIdx].text || '').trim())
+      syncStamps.push({ i: syncIdx, t: Math.max(0, nowPos() - TAP_LEAD) });
+    syncIdx++;
+    if (syncIdx >= lineNodes.length) finishSync();
+    else paintSync();
+  }
+
+  function undoStamp() {
+    if (syncIdx === 0) return;
+    syncIdx--;
+    if (syncStamps.length && syncStamps[syncStamps.length - 1].i === syncIdx)
+      syncStamps.pop();
+    paintSync();
+  }
+
+  function cancelSync() {
+    syncing = false; syncStamps = []; syncIdx = 0;
+    if (lyrics) renderLyrics(lyrics);
+    syncStatus('Sync cancelled — nothing saved.');
+    setTimeout(() => el.sync.className = '', 2200);
+  }
+
+  async function finishSync() {
+    syncing = false;
+    if (!syncStamps.length) { cancelSync(); return; }
+    syncStatus('<span class="spinner"></span>Saving your timing…');
+    try {
+      const r = await fetch('/api/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: trackId, stamps: syncStamps }),
+      });
+      const d = await r.json();
+      if (!d.ok) { syncStatus('Couldn’t save: ' + esc(d.error || 'unknown'), 'bad'); return; }
+      syncStatus(`Timed ${d.timed} of ${d.total} lines — highlighting now.` +
+        `<br><span class="k">p</span> send this timing to LRCLIB so others get it too`);
+      // loadDetail only re-renders when it has nothing yet, so the stale plain
+      // version has to be cleared first -- otherwise the words never start
+      // highlighting and `p` silently does nothing, because lyricsKind is
+      // still 'plain'.
+      lyrics = null; lyricsKind = null;
+      loadDetail();
+    } catch (e) {
+      syncStatus('Couldn’t reach the server.', 'bad');
+    }
+  }
+
+  async function publishSync() {
+    if (!trackId || lyricsKind !== 'synced') return;
+    syncStatus('<span class="spinner"></span>Publishing to LRCLIB (a few seconds)…');
+    try {
+      const r = await fetch('/api/publish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: trackId }),
+      });
+      const d = await r.json();
+      syncStatus(d.ok ? 'Published — thanks, that one’s fixed for everyone.'
+                      : 'Publish failed: ' + esc(d.error || 'unknown'),
+                 d.ok ? '' : 'bad');
+    } catch (e) {
+      syncStatus('Couldn’t reach the server.', 'bad');
+    }
+    setTimeout(() => el.sync.className = '', 5000);
+  }
+
+  document.addEventListener('keydown', e => {
+    if (syncing) {
+      if (e.key === ' ') stampLine();
+      else if (e.key === 'Backspace') undoStamp();
+      else if (e.key === 'Enter') finishSync();
+      else if (e.key === 'Escape') cancelSync();
+      else return;
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '[') setOffset(offset - 0.25);
+    else if (e.key === ']') setOffset(offset + 0.25);
+    else if (e.key === '0') setOffset(0);
+    else if (e.key === 's' || e.key === 'S') startSync();
+    else if (e.key === 't' || e.key === 'T') toggleTranslation();
+    else if (e.key === 'p' || e.key === 'P') publishSync();
+    else return;
+    e.preventDefault();
+  });
+  function setOffset(v) {
+    offset = Math.round(v * 100) / 100;
+    localStorage.setItem('lyricOffset', String(offset));
+    el.offset.textContent = `sync offset ${offset >= 0 ? '+' : ''}${offset.toFixed(2)}s  ( [ / ] adjust · 0 reset )`;
+    el.offset.classList.add('show');
+    clearTimeout(setOffset._t);
+    setOffset._t = setTimeout(() => el.offset.classList.remove('show'), 2600);
+  }
+
+  const esc = s => String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  function showStatus(html) {
+    el.status.hidden = false;
+    el.status.innerHTML = html;
+    el.lyrics.hidden = true;
+  }
+  function hideStatus() { el.status.hidden = true; el.lyrics.hidden = false; }
+
+  // ---------- polling ----------
+  async function poll() {
+    try {
+      const r = await fetch('/api/now');
+      const d = await r.json();
+      render(d);
+    } catch (e) { /* server restarting */ }
+    setTimeout(poll, 1000);
+  }
+
+  function render(d) {
+    if (d.status === 'not_running') {
+      resetTrack();
+      el.title.textContent = 'Spotify isn’t open';
+      el.artist.textContent = '';
+      showStatus('<h2>Spotify isn’t running</h2><p>Open the Spotify desktop app and press play. This page will pick it up automatically.</p>');
+      return;
+    }
+    if (d.status === 'stopped') {
+      resetTrack();
+      el.title.textContent = 'Nothing playing';
+      el.artist.textContent = '';
+      showStatus('<h2>Nothing playing</h2><p>Hit play in Spotify.</p>');
+      return;
+    }
+    if (d.status === 'not_installed') {
+      resetTrack();
+      el.title.textContent = 'Spotify not found';
+      el.artist.textContent = '';
+      showStatus('<h2>Can’t find the Spotify app</h2><p>This reads the Spotify ' +
+        'desktop app, so it needs to be installed in your Applications folder. ' +
+        'The web player and phone app won’t work.</p>');
+      return;
+    }
+    if (d.status === 'no_track') {
+      resetTrack();
+      el.title.textContent = 'Playing on another device';
+      el.artist.textContent = '';
+      showStatus('<h2>Playing somewhere else</h2><p>Spotify is open, but the ' +
+        'music is coming from another device (phone, speaker, or the web player). ' +
+        'Switch playback to this Mac and the lyrics will pick right up.</p>');
+      return;
+    }
+    if (d.status === 'error') {
+      resetTrack();
+      el.title.textContent = 'Can’t reach Spotify';
+      showStatus('<h2>Can’t reach Spotify</h2><p>' + esc(d.message || '') + '</p>');
+      return;
+    }
+    if (d.status !== 'ok') return;
+
+    hideStatus();
+    playing = d.playing;
+    basePos = d.position;
+    baseAt = performance.now();
+    duration = d.track.duration_ms / 1000;
+
+    if (d.track.id !== trackId) {
+      trackId = d.track.id;
+      lyrics = null; lyricsKind = null; lyricsSource = null;
+      lyricsDelta = 0; timingDropped = false;
+      translation = null; showTranslation = false;
+      vocals = null; lastSingerKey = null;
+      el.singer.hidden = true; el.singer.innerHTML = '';
+      lineNodes = []; lastActive = -1;
+      el.tbtn.hidden = true;
+      analysisStatus = null; detailPolls = 0; clearTimeout(detailTimer);
+      el.lyrics.innerHTML = '<div class="line">…</div>';
+      el.side.innerHTML = '<p class="muted"><span class="spinner"></span>Looking this one up…</p>';
+      el.title.textContent = d.track.name;
+      el.artist.textContent = d.track.artist + ' · ' + d.track.album;
+      const art = d.track.artwork_url;
+      el.art.style.backgroundImage = art ? `url("${art}")` : '';
+      el.bg.style.backgroundImage = art ? `url("${art}")` : '';
+      loadDetail();
+    }
+
+    // badges
+    const b = [];
+    if (d.playing) b.push('<span class="badge live">playing</span>');
+    else b.push('<span class="badge">paused</span>');
+    if (lyricsKind === 'synced') b.push('<span class="badge">synced lyrics</span>');
+    else if (lyricsKind === 'plain') b.push('<span class="badge">lyrics (not synced)</span>');
+    else if (lyricsKind === 'instrumental') b.push('<span class="badge">instrumental</span>');
+    else if (d.lyrics_status === 'not_found') b.push('<span class="badge">no lyrics found</span>');
+    // Worth naming: a Genius match is looser than an LRCLIB one, so if the
+    // words look wrong this badge is the first clue why.
+    if (lyricsSource && lyricsSource !== 'LRCLIB')
+      b.push('<span class="badge">via ' + esc(lyricsSource) + '</span>');
+    // The match came from a different edit of the song (single vs album cut).
+    // Say so: otherwise drifting highlights just look broken.
+    if (lyricsKind === 'synced' && Math.abs(lyricsDelta) > 5)
+      b.push('<span class="badge" title="These timings were made for a version ' +
+             Math.abs(lyricsDelta) + 's ' + (lyricsDelta < 0 ? 'shorter' : 'longer') +
+             '. Use [ and ] to nudge.">timing approximate</span>');
+    if (timingDropped)
+      b.push('<span class="badge" title="LRCLIB only has timing for a different ' +
+             'edit, so the words are shown without it.">different edit — unsynced</span>');
+    el.badges.innerHTML = b.join('');
+
+    if (d.analysis_status !== analysisStatus) {
+      analysisStatus = d.analysis_status;
+      if (['ok','context','error','no_sdk','unavailable','skipped'].includes(analysisStatus)) loadDetail();
+      else if (analysisStatus === 'thinking')
+        el.side.innerHTML = '<p class="muted"><span class="spinner"></span>Working out what this song is about…</p>';
+      else if (analysisStatus === 'researching')
+        el.side.innerHTML = '<p class="muted"><span class="spinner"></span>No lyrics for this one — looking up the song and the artist…</p>';
+    }
+    if (d.lyrics_status === 'ok' && !lyrics) loadDetail();
+    else if (d.has_vocals && !vocals) loadDetail();
+  }
+
+  function resetTrack() {
+    trackId = null; lyrics = null; lineNodes = [];
+    el.badges.innerHTML = '';
+    el.prog.style.width = '0%';
+    el.side.innerHTML = '<p class="muted">Play something in Spotify to get started.</p>';
+  }
+
+  async function loadDetail() {
+    if (!trackId) return;
+    const id = trackId;
+    try {
+      const r = await fetch('/api/track?id=' + encodeURIComponent(id));
+      const d = await r.json();
+      if (id !== trackId || d.status !== 'ok') return;
+      if (d.vocals && !vocals) vocals = d.vocals;
+      if (d.lyrics && !lyrics) renderLyrics(d.lyrics);
+      else if (vocals && !el.lyrics.querySelector('.who')) applyVocals();
+      else if (d.lyrics_status === 'not_found' && !lyrics) renderNoLyrics(d.track);
+      renderAnalysis(d);
+    } catch (e) {}
+  }
+
+  function renderNoLyrics(t) {
+    lyricsKind = null;
+    el.tbtn.hidden = true;
+    el.lyrics.innerHTML =
+      '<div class="line" style="font-size:22px;color:rgba(255,255,255,.5)">' +
+      'No lyrics found for this one.</div>' +
+      '<div class="line" style="font-size:15px;font-weight:400;color:rgba(255,255,255,.32)">' +
+      'LRCLIB is community-contributed, so obscure or very new tracks sometimes ' +
+      'aren’t in it yet.</div>';
+  }
+
+  function renderLyrics(L) {
+    lyrics = L; lyricsKind = L.kind; lyricsSource = L.source || null; lastActive = -1;
+    lyricsDelta = L.duration_delta || 0; timingDropped = !!L.timing_dropped;
+    if (L.kind === 'instrumental') {
+      el.lyrics.innerHTML = '<div class="line" style="color:rgba(255,255,255,.45)">♪ Instrumental</div>';
+      el.tbtn.hidden = true;
+      return;
+    }
+    el.lyrics.className = L.kind === 'plain' ? 'plain' : '';
+    el.lyrics.innerHTML = L.lines.map(l =>
+      l.text ? `<div class="line">${esc(l.text)}</div>`
+             : '<div class="line blank"></div>').join('');
+    lineNodes = Array.from(el.lyrics.querySelectorAll('.line'));
+    applyVocals();
+    paintTranslation();          // re-attach after any re-render
+    updateTranslateButton();
+    if (L.kind === 'plain') {
+      lineNodes.forEach(n => n.classList.add('past'));
+      // Nobody has timed this one. Offer the fix rather than leaving it static.
+      syncStatus('These lyrics have no timing. Press <span class="k">s</span> to ' +
+                 'tap along and add it.');
+      clearTimeout(syncStatus._t);
+      syncStatus._t = setTimeout(() => { if (!syncing) el.sync.className = ''; }, 7000);
+    } else if (!syncing) {
+      el.sync.className = '';
+    }
+  }
+
+  function renderAnalysis(d) {
+    const st = d.analysis_status;
+    if (st === 'thinking' || st === 'waiting' || st === 'researching') {
+      el.side.innerHTML = '<p class="muted"><span class="spinner"></span>' +
+        (st === 'researching'
+          ? 'No lyrics for this one — looking up the song and the artist…'
+          : 'Working out what this song is about…') + '</p>';
+      // Bounded: a worker thread that dies without updating status would
+      // otherwise leave this polling every 2.5s for as long as the page is open.
+      clearTimeout(detailTimer);
+      if (++detailPolls <= MAX_DETAIL_POLLS) {
+        detailTimer = setTimeout(loadDetail, 2500);
+      } else {
+        el.side.innerHTML = '<h3>Song breakdown</h3><p class="muted">This one is ' +
+          'taking longer than expected. Skip to the next track and back to retry.</p>';
+      }
+      return;
+    }
+    if (st === 'no_sdk') {
+      el.side.innerHTML = '<h3>Song breakdown</h3><p class="muted">Install the ' +
+        'Claude Agent SDK to get an explanation of each song — it uses your ' +
+        'Claude Code login, no API key. In the script\'s folder:</p>' +
+        '<p><code>python3 -m venv .venv &amp;&amp; .venv/bin/pip install claude-agent-sdk</code></p>' +
+        '<p class="muted">Then restart the script.</p>';
+      return;
+    }
+    if (st === 'unavailable') {
+      el.side.innerHTML = '<h3>Song breakdown</h3><p class="muted">' +
+        esc(d.analysis_error || 'Claude Code is unavailable.') + '</p>';
+      return;
+    }
+    if (st === 'skipped') {
+      el.side.innerHTML = '<p class="muted">Nothing to analyse for this track.</p>';
+      return;
+    }
+    if (st === 'context') { renderContext(d.analysis); return; }
+    if (st === 'error') {
+      el.side.innerHTML = '<h3>Song breakdown</h3><p class="muted">Couldn’t generate one: ' + esc(d.analysis_error || '') + '</p>';
+      return;
+    }
+    const a = d.analysis;
+    if (!a) return;
+    let h = '';
+    if (a.one_liner) h += `<div id="oneliner">${esc(a.one_liner)}</div>`;
+    if (a.genre) h += `<div id="themes" style="margin-bottom:16px"><span class="chip genre">${esc(a.genre)}</span></div>`;
+    if (a.summary) h += `<h3>What it’s about</h3><p>${esc(a.summary)}</p>`;
+    if (a.themes && a.themes.length)
+      h += `<h3>Themes</h3><div id="themes">${a.themes.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>`;
+    if (a.mood) h += `<h3>Mood</h3><p>${esc(a.mood)}</p>`;
+    if (a.story) h += `<h3>How it unfolds</h3><p>${esc(a.story)}</p>`;
+    if (a.key_lines && a.key_lines.length)
+      h += `<h3>Lines worth catching</h3>` + a.key_lines.map(k =>
+        `<div class="kl"><div class="q">“${esc(k.line)}”</div><div class="m">${esc(k.meaning)}</div></div>`).join('');
+    if (a.context) h += `<h3>Background</h3><p>${esc(a.context)}</p>`;
+    el.side.innerHTML = h || '<p class="muted">No breakdown available.</p>';
+    el.side.parentElement.scrollTop = 0;
+  }
+
+  // ---------- who is singing ----------
+  // Distinct, readable on the dark background, and ordered so the first two
+  // singers -- by far the common case -- are the most different from each other.
+  const VOICE_COLOURS = ['#1ed760', '#7cc4ff', '#ffb35c', '#f28ab2', '#c9a7ff', '#7ee0d2'];
+  const voiceColour = name => {
+    const i = vocals ? vocals.singers.indexOf(name) : -1;
+    return VOICE_COLOURS[(i < 0 ? 0 : i) % VOICE_COLOURS.length];
+  };
+  const nameChips = names => names.map(n =>
+    `<span class="nm"><span class="dot" style="background:${voiceColour(n)}"></span>${esc(n)}</span>`
+  ).join('<span>&amp;</span>');
+
+  // Tag the first line of each run sung by the same people. Only when the
+  // credits actually name someone: tagging every line of a solo song with the
+  // billed artist would just be noise.
+  function applyVocals() {
+    el.lyrics.querySelectorAll('.who').forEach(n => n.remove());
+    if (!vocals || !vocals.credited || !lineNodes.length || !lyrics) return;
+    let prev = null;
+    lyrics.lines.forEach((l, i) => {
+      const who = vocals.lines[i];
+      if (!who || !(l.text || '').trim()) return;
+      const k = who.join('|');
+      if (k === prev) return;
+      prev = k;
+      const tag = document.createElement('div');
+      tag.className = 'who';
+      tag.innerHTML = nameChips(who);
+      lineNodes[i].insertAdjacentElement('beforebegin', tag);
+    });
+  }
+
+  function showSinger(idx) {
+    const who = (vocals && vocals.credited && idx >= 0) ? vocals.lines[idx] : null;
+    const k = who ? who.join('|') : null;
+    if (k === lastSingerKey) return;
+    lastSingerKey = k;
+    if (!who) { el.singer.hidden = true; el.singer.innerHTML = ''; return; }
+    el.singer.hidden = false;
+    el.singer.innerHTML = '<span class="lbl">Singing</span>' + nameChips(who);
+  }
+
+  // ---------- translation ----------
+  // The button and the `t` key are the same action; this is the only thing
+  // that decides how it looks, so the two can't drift apart.
+  function updateTranslateButton(busy) {
+    const b = el.tbtn;
+    const usable = !!(lyrics && lineNodes.length && lyricsKind !== 'instrumental');
+    b.hidden = !usable;
+    if (!usable) return;
+    b.disabled = !!busy;
+    b.classList.toggle('on', showTranslation);
+    if (busy) b.textContent = 'Translating…';
+    else if (translation && !translation.lines.length) {
+      b.textContent = 'No translation needed';
+      b.disabled = true;
+    }
+    else if (translation) b.textContent = showTranslation ? 'Hide translation' : 'Show translation';
+    else b.textContent = 'Translate';
+  }
+
+  async function toggleTranslation() {
+    if (!trackId || !lyrics || !lineNodes.length) return;
+    if (translation) {                       // already fetched: just flip it
+      showTranslation = !showTranslation;
+      paintTranslation();
+      updateTranslateButton();
+      return;
+    }
+    syncStatus('<span class="spinner"></span>Translating…');
+    updateTranslateButton(true);
+    try {
+      const r = await fetch('/api/translate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: trackId }),
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        syncStatus('Couldn’t translate: ' + esc(d.error || ''), 'bad');
+        updateTranslateButton();
+        return;
+      }
+      if (!d.needs_translation || !d.lines.length) {
+        syncStatus(`Already in English (${esc(d.source_language || 'English')}) — nothing to translate.`);
+        setTimeout(() => el.sync.className = '', 3500);
+        translation = { lines: [] };
+        updateTranslateButton();
+        return;
+      }
+      translation = d; showTranslation = true;
+      paintTranslation();
+      updateTranslateButton();
+      const unsure = d.lines.filter(l => l.confidence === 'low').length;
+      syncStatus(`Translated from ${esc(d.source_language)} — ${d.lines.length} lines` +
+        (unsure ? `, ${unsure} marked uncertain` : '') +
+        `<br><span class="k">t</span> hide`);
+      setTimeout(() => el.sync.className = '', 6000);
+    } catch (e) {
+      syncStatus('Couldn’t reach the server.', 'bad');
+      updateTranslateButton();
+    }
+  }
+
+  function paintTranslation() {
+    el.lyrics.querySelectorAll('.tr').forEach(n => n.remove());
+    if (!showTranslation || !translation) return;
+    for (const l of translation.lines) {
+      const host = lineNodes[l.i];
+      if (!host) continue;
+      const div = document.createElement('div');
+      div.className = 'tr' + (l.confidence === 'low' ? ' unsure' : '');
+      div.innerHTML = esc(l.en) +
+        (l.note ? ` <span class="why">— ${esc(l.note)}</span>` : '');
+      host.insertAdjacentElement('afterend', div);
+    }
+  }
+
+  // Research panel, shown when a song has no lyrics anywhere. Deliberately
+  // labelled differently from the lyric breakdown: this is what's published
+  // about the record, not a reading of its words.
+  function renderContext(a) {
+    if (!a) { el.side.innerHTML = '<p class="muted">Nothing found for this track.</p>'; return; }
+    let h = '<div class="ctx-flag">No lyrics found — here’s what’s known about it</div>';
+    if (a.one_liner) h += `<div id="oneliner">${esc(a.one_liner)}</div>`;
+    if (a.genre && a.genre.toLowerCase() !== 'unknown')
+      h += `<div id="themes" style="margin-bottom:16px"><span class="chip genre">${esc(a.genre)}</span></div>`;
+    if (a.artist_background) h += `<h3>The artist</h3><p>${esc(a.artist_background)}</p>`;
+    if (a.song_context) h += `<h3>This release</h3><p>${esc(a.song_context)}</p>`;
+    if (a.sounds_like && a.sounds_like.length)
+      h += `<h3>Sounds like</h3><div id="themes">${a.sounds_like.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>`;
+    if (a.confidence === 'none')
+      h += '<p class="muted" style="margin-top:16px">Almost nothing is published about this one — it may be a very new or self-released track.</p>';
+    else if (a.confidence === 'some')
+      h += '<p class="muted" style="margin-top:16px">Coverage of this artist is thin, so some of the above is partial.</p>';
+    el.side.innerHTML = h;
+    el.side.parentElement.scrollTop = 0;
+  }
+
+  // ---------- 60fps highlight loop ----------
+  function tick() {
+    const t = playing ? basePos + (performance.now() - baseAt) / 1000 : basePos;
+    if (duration > 0) el.prog.style.width = Math.min(100, (t / duration) * 100) + '%';
+
+    if (lyrics && lyrics.kind === 'synced' && lineNodes.length) {
+      const cur = t - offset;
+      let idx = -1;
+      const L = lyrics.lines;
+      for (let i = 0; i < L.length; i++) {
+        if (L[i].t !== null && L[i].t <= cur) idx = i; else break;
+      }
+      if (idx !== lastActive) {
+        lineNodes.forEach((n, i) => {
+          n.classList.toggle('active', i === idx);
+          n.classList.toggle('past', i < idx);
+          n.classList.toggle('near', i === idx + 1 || i === idx - 1);
+        });
+        lastActive = idx;
+        showSinger(idx);
+        if (idx >= 0 && Date.now() - userScrolledAt > 4000) {
+          const node = lineNodes[idx];
+          const target = Math.max(0, node.offsetTop - el.lyrics.clientHeight * 0.38);
+          autoScrollUntil = Date.now() + 1200;
+          el.lyrics.scrollTo({ top: target, behavior: 'smooth' });
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  setOffset(offset);
+  el.offset.classList.remove('show');
+  poll();
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
